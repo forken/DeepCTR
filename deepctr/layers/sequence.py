@@ -182,6 +182,7 @@ class WeightedSequenceLayer(Layer):
         base_config = super(WeightedSequenceLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
+
 class AttentionSequencePoolingLayer(Layer):
     """The Attentional sequence pooling operation used in DIN.
 
@@ -212,14 +213,18 @@ class AttentionSequencePoolingLayer(Layer):
 
     def __init__(self, att_hidden_units=(80, 40), att_activation='sigmoid', weight_normalization=False,
                  return_score=False,
-                 supports_masking=False, **kwargs):
+                 supports_masking=False,
+                 pos_weighted=False,
+                 **kwargs):
 
         self.att_hidden_units = att_hidden_units
         self.att_activation = att_activation
         self.weight_normalization = weight_normalization
         self.return_score = return_score
+        self.pos_weighted=pos_weighted
         super(AttentionSequencePoolingLayer, self).__init__(**kwargs)
         self.supports_masking = supports_masking
+
 
     def build(self, input_shape):
         if not self.supports_masking:
@@ -240,11 +245,16 @@ class AttentionSequencePoolingLayer(Layer):
             pass
         self.local_att = LocalActivationUnit(
             self.att_hidden_units, self.att_activation, l2_reg=0, dropout_rate=0, use_bn=False, seed=1024, )
+
+        if self.pos_weighted:
+            self.posw = self.add_weight(name='posw',
+                                          shape=(input_shape[1][1], 1),
+                                          initializer=tf.keras.initializers.Constant(1.0),
+                                          trainable=True)
         super(AttentionSequencePoolingLayer, self).build(
             input_shape)  # Be sure to call this somewhere!
 
     def call(self, inputs, mask=None, training=None, **kwargs):
-
         if self.supports_masking:
             if mask is None:
                 raise ValueError(
@@ -253,12 +263,14 @@ class AttentionSequencePoolingLayer(Layer):
             key_masks = tf.expand_dims(mask[-1], axis=1)
 
         else:
-
             queries, keys, keys_length = inputs
             hist_len = keys.get_shape()[1]
             key_masks = tf.sequence_mask(keys_length, hist_len)
 
         attention_score = self.local_att([queries, keys], training=training)
+
+        if self.pos_weighted:
+            attention_score = attention_score*self.posw
 
         outputs = tf.transpose(attention_score, (0, 2, 1))
 
@@ -292,10 +304,9 @@ class AttentionSequencePoolingLayer(Layer):
         return None
 
     def get_config(self, ):
-
         config = {'att_hidden_units': self.att_hidden_units, 'att_activation': self.att_activation,
                   'weight_normalization': self.weight_normalization, 'return_score': self.return_score,
-                  'supports_masking': self.supports_masking}
+                  'supports_masking': self.supports_masking, 'pos_weighted': self.pos_weighted}
         base_config = super(AttentionSequencePoolingLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
